@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { Zap, LogOut, Bike, Package, Settings, Plus, Trash2, MapPin, Send, Copy, Check, MessageCircle } from "lucide-react";
+import { Zap, LogOut, Bike, Package, Settings, Plus, Trash2, MapPin, Send, Copy, Check, MessageCircle, Download, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -36,6 +36,9 @@ export default function StoreDashboard() {
   const [oForm, setOForm] = useState({ customer_name: "", customer_whatsapp: "", address: "", items: "", total: 0, payment_method: "PIX", notes: "" });
   const [ladToken, setLadToken] = useState("");
   const [dispatchMotoboy, setDispatchMotoboy] = useState("");
+  const [openImport, setOpenImport] = useState(false);
+  const [ladUuid, setLadUuid] = useState("");
+  const [refreshing, setRefreshing] = useState(false);
 
   const loadAll = async () => {
     const [m, o, s] = await Promise.all([api.get("/motoboys"), api.get("/orders"), api.get("/store/me")]);
@@ -72,6 +75,23 @@ export default function StoreDashboard() {
   };
   const changeStatus = async (id, status) => { await api.patch(`/orders/${id}/status`, { status }); toast.success("Status atualizado"); loadAll(); };
   const saveLad = async () => { await api.put("/store/lad", { api_token: ladToken, api_base: "https://api2.laddelivery.com.br" }); toast.success("Token LAD salvo"); loadAll(); };
+  const importLad = async () => {
+    if (!ladUuid.trim()) { toast.error("Informe o UUID do pedido LAD"); return; }
+    try {
+      const { data } = await api.post("/store/lad/import", { uuid: ladUuid.trim() });
+      toast.success(data.imported ? "Pedido importado da LAD" : "Pedido atualizado");
+      setOpenImport(false); setLadUuid(""); loadAll();
+    } catch (e) { toast.error(e.response?.data?.detail || "Falha ao importar"); }
+  };
+  const refreshLad = async () => {
+    setRefreshing(true);
+    try {
+      const { data } = await api.post("/store/lad/refresh");
+      toast.success(`${data.updated}/${data.total} pedidos sincronizados`);
+      loadAll();
+    } catch (e) { toast.error(e.response?.data?.detail || "Falha"); }
+    finally { setRefreshing(false); }
+  };
   const testLad = async () => {
     try { const { data } = await api.get("/store/lad/loja"); toast.success(`Conectado: ${data.data?.nome || "OK"}`); }
     catch (e) { toast.error(e.response?.data?.detail || "Falha"); }
@@ -109,9 +129,35 @@ export default function StoreDashboard() {
           </TabsList>
 
           <TabsContent value="orders" className="mt-6">
-            <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
               <h2 className="font-display font-bold text-2xl">Pedidos</h2>
-              <Dialog open={openO} onOpenChange={setOpenO}>
+              <div className="flex items-center gap-2 flex-wrap">
+                {store?.lad_api_token && (
+                  <>
+                    <Button data-testid="lad-refresh-btn" onClick={refreshLad} disabled={refreshing} variant="outline" className="border-slate-700">
+                      <RefreshCw className={`w-4 h-4 mr-2 ${refreshing ? "animate-spin" : ""}`} /> Sincronizar LAD
+                    </Button>
+                    <Dialog open={openImport} onOpenChange={setOpenImport}>
+                      <DialogTrigger asChild>
+                        <Button data-testid="lad-import-btn" variant="outline" className="border-emerald-700 text-emerald-300 hover:bg-emerald-950">
+                          <Download className="w-4 h-4 mr-2" /> Importar da LAD
+                        </Button>
+                      </DialogTrigger>
+                      <DialogContent className="bg-slate-950 border-slate-800 text-slate-100">
+                        <DialogHeader><DialogTitle className="font-display">Importar pedido LAD</DialogTitle></DialogHeader>
+                        <div>
+                          <Label>UUID do pedido LAD</Label>
+                          <Input data-testid="lad-uuid-input" value={ladUuid} onChange={e => setLadUuid(e.target.value)}
+                            placeholder="b3f6a8f0-1234-4c56-9abc-def012345678"
+                            className="bg-slate-900 border-slate-800 mt-1 font-mono" />
+                          <p className="text-xs text-slate-500 mt-2">Puxaremos os dados do pedido diretamente da API LAD e criaremos um rastreio interno.</p>
+                        </div>
+                        <DialogFooter><Button data-testid="lad-import-confirm-btn" onClick={importLad} className="bg-indigo-500 hover:bg-indigo-600">Importar</Button></DialogFooter>
+                      </DialogContent>
+                    </Dialog>
+                  </>
+                )}
+                <Dialog open={openO} onOpenChange={setOpenO}>
                 <DialogTrigger asChild>
                   <Button data-testid="create-order-btn" className="bg-indigo-500 hover:bg-indigo-600"><Plus className="w-4 h-4 mr-2" /> Novo pedido</Button>
                 </DialogTrigger>
@@ -137,6 +183,7 @@ export default function StoreDashboard() {
                   <DialogFooter><Button data-testid="order-save-btn" onClick={createOrder} className="bg-indigo-500 hover:bg-indigo-600">Criar pedido</Button></DialogFooter>
                 </DialogContent>
               </Dialog>
+              </div>
             </div>
 
             <div className="grid gap-3">
@@ -153,6 +200,7 @@ export default function StoreDashboard() {
                         </div>
                         <div className="text-sm text-slate-400">{o.address}</div>
                         <div className="text-xs text-slate-500 mt-1">{o.items}</div>
+                        {o.lad_uuid && <div className="text-xs text-emerald-400 mt-1 font-mono">LAD · {o.lad_uuid.slice(0, 8)}…</div>}
                         {o.motoboy && <div className="text-xs text-indigo-300 mt-1">🛵 {o.motoboy.name}</div>}
                       </div>
                       <div className="text-right">

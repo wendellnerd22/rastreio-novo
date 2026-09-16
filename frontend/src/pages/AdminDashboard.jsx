@@ -1,18 +1,30 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { Store, Users, Bike, Package, LogOut, Zap, ToggleLeft, ToggleRight } from "lucide-react";
+import { Store, Users, Bike, Package, LogOut, Zap, ToggleLeft, ToggleRight, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAuth } from "@/context/AuthContext";
+
+const PLAN_COLOR = {
+  free: "bg-slate-700 text-slate-300",
+  basic: "bg-indigo-500/20 text-indigo-300 border-indigo-500/30",
+  pro: "bg-amber-500/20 text-amber-300 border-amber-500/30",
+};
 
 export default function AdminDashboard() {
   const { user, api, logout } = useAuth();
   const nav = useNavigate();
   const [stats, setStats] = useState({});
   const [stores, setStores] = useState([]);
+  const [openNew, setOpenNew] = useState(false);
+  const [form, setForm] = useState({ store_name: "", owner_name: "", owner_email: "", owner_password: "", phone: "", plan: "free" });
 
   const load = async () => {
     const [s, st] = await Promise.all([api.get("/admin/stats"), api.get("/admin/stores")]);
@@ -22,6 +34,24 @@ export default function AdminDashboard() {
 
   const toggle = async (sid, active) => {
     try { await api.patch(`/admin/stores/${sid}`, { active: !active }); toast.success("Status atualizado"); load(); }
+    catch { toast.error("Falha"); }
+  };
+  const changePlan = async (sid, plan) => {
+    try { await api.put(`/admin/stores/${sid}/plan`, { plan }); toast.success(`Plano ${plan}`); load(); }
+    catch (e) { toast.error(e.response?.data?.detail || "Erro"); }
+  };
+  const createStore = async () => {
+    try {
+      await api.post("/admin/stores", form);
+      toast.success("Loja criada");
+      setOpenNew(false);
+      setForm({ store_name: "", owner_name: "", owner_email: "", owner_password: "", phone: "", plan: "free" });
+      load();
+    } catch (e) { toast.error(e.response?.data?.detail || "Erro"); }
+  };
+  const delStore = async (sid) => {
+    if (!window.confirm("Excluir a loja e todos os dados?")) return;
+    try { await api.delete(`/admin/stores/${sid}`); toast.success("Removida"); load(); }
     catch { toast.error("Falha"); }
   };
 
@@ -63,13 +93,42 @@ export default function AdminDashboard() {
 
         <Card className="card-dark border-slate-800 overflow-hidden">
           <div className="p-5 border-b border-slate-800 flex items-center justify-between">
-            <h2 className="font-display font-bold text-xl">Lojas conectadas</h2>
-            <Badge variant="outline" className="border-indigo-500/30 text-indigo-300">{stores.length} total</Badge>
+            <div className="flex items-center gap-3">
+              <h2 className="font-display font-bold text-xl">Lojas conectadas</h2>
+              <Badge variant="outline" className="border-indigo-500/30 text-indigo-300">{stores.length} total</Badge>
+            </div>
+            <Dialog open={openNew} onOpenChange={setOpenNew}>
+              <DialogTrigger asChild>
+                <Button data-testid="admin-new-store-btn" className="bg-indigo-500 hover:bg-indigo-600"><Plus className="w-4 h-4 mr-2" />Nova loja</Button>
+              </DialogTrigger>
+              <DialogContent className="bg-slate-950 border-slate-800 text-slate-100 max-w-lg">
+                <DialogHeader><DialogTitle className="font-display">Criar loja + usuário</DialogTitle></DialogHeader>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="col-span-2"><Label>Nome da loja</Label><Input data-testid="new-store-name" value={form.store_name} onChange={e => setForm({...form, store_name: e.target.value})} className="bg-slate-900 border-slate-800 mt-1" /></div>
+                  <div><Label>Responsável</Label><Input data-testid="new-store-owner" value={form.owner_name} onChange={e => setForm({...form, owner_name: e.target.value})} className="bg-slate-900 border-slate-800 mt-1" /></div>
+                  <div><Label>Telefone</Label><Input value={form.phone} onChange={e => setForm({...form, phone: e.target.value})} className="bg-slate-900 border-slate-800 mt-1" /></div>
+                  <div><Label>Email login</Label><Input data-testid="new-store-email" type="email" value={form.owner_email} onChange={e => setForm({...form, owner_email: e.target.value})} className="bg-slate-900 border-slate-800 mt-1" /></div>
+                  <div><Label>Senha inicial</Label><Input data-testid="new-store-password" type="text" value={form.owner_password} onChange={e => setForm({...form, owner_password: e.target.value})} className="bg-slate-900 border-slate-800 mt-1" /></div>
+                  <div className="col-span-2"><Label>Plano</Label>
+                    <Select value={form.plan} onValueChange={v => setForm({...form, plan: v})}>
+                      <SelectTrigger data-testid="new-store-plan" className="bg-slate-900 border-slate-800 mt-1"><SelectValue /></SelectTrigger>
+                      <SelectContent className="bg-slate-900 border-slate-800 text-slate-100">
+                        <SelectItem value="free">Free — 2 motoboys, 50 pedidos/mês</SelectItem>
+                        <SelectItem value="basic">Basic — 5 motoboys, 500 pedidos/mês</SelectItem>
+                        <SelectItem value="pro">Pro — ilimitado</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <DialogFooter><Button data-testid="new-store-save-btn" onClick={createStore} className="bg-indigo-500 hover:bg-indigo-600">Criar</Button></DialogFooter>
+              </DialogContent>
+            </Dialog>
           </div>
           <Table>
             <TableHeader>
               <TableRow className="border-slate-800 hover:bg-transparent">
                 <TableHead className="text-slate-400">Loja</TableHead>
+                <TableHead className="text-slate-400">Plano</TableHead>
                 <TableHead className="text-slate-400">Motoboys</TableHead>
                 <TableHead className="text-slate-400">Pedidos</TableHead>
                 <TableHead className="text-slate-400">LAD</TableHead>
@@ -81,6 +140,14 @@ export default function AdminDashboard() {
               {stores.map(s => (
                 <TableRow key={s.id} className="border-slate-800 hover:bg-slate-900/50" data-testid={`admin-store-row-${s.id}`}>
                   <TableCell className="font-medium">{s.name}<div className="text-xs text-slate-500">{s.phone || "sem telefone"}</div></TableCell>
+                  <TableCell>
+                    <Select value={s.plan || "free"} onValueChange={v => changePlan(s.id, v)}>
+                      <SelectTrigger data-testid={`plan-${s.id}`} className="w-28 bg-slate-900 border-slate-800 h-8 text-xs"><SelectValue /></SelectTrigger>
+                      <SelectContent className="bg-slate-900 border-slate-800 text-slate-100">
+                        <SelectItem value="free">Free</SelectItem><SelectItem value="basic">Basic</SelectItem><SelectItem value="pro">Pro</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </TableCell>
                   <TableCell>{s.motoboys_count}</TableCell>
                   <TableCell>{s.orders_count}</TableCell>
                   <TableCell>{s.lad_api_token ? <Badge className="bg-emerald-500/20 text-emerald-400 border-emerald-500/30">Conectada</Badge> : <span className="text-slate-500 text-sm">—</span>}</TableCell>
@@ -92,11 +159,14 @@ export default function AdminDashboard() {
                     <Button data-testid={`admin-toggle-${s.id}`} onClick={() => toggle(s.id, s.active)} variant="ghost" size="sm" className="text-slate-400 hover:text-white">
                       {s.active ? <ToggleRight className="w-5 h-5 text-indigo-400" /> : <ToggleLeft className="w-5 h-5" />}
                     </Button>
+                    <Button data-testid={`admin-del-${s.id}`} onClick={() => delStore(s.id)} variant="ghost" size="sm" className="text-rose-400 hover:bg-rose-950">
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
                   </TableCell>
                 </TableRow>
               ))}
               {stores.length === 0 && (
-                <TableRow className="border-slate-800"><TableCell colSpan={6} className="text-center text-slate-500 py-10">Nenhuma loja cadastrada ainda.</TableCell></TableRow>
+                <TableRow className="border-slate-800"><TableCell colSpan={7} className="text-center text-slate-500 py-10">Nenhuma loja cadastrada ainda.</TableCell></TableRow>
               )}
             </TableBody>
           </Table>

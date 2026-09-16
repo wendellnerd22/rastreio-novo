@@ -132,6 +132,30 @@ class LadConfigIn(BaseModel):
     api_base: Optional[str] = "https://api2.laddelivery.com.br"
 
 
+class AdminCreateStoreIn(BaseModel):
+    store_name: str
+    owner_name: str
+    owner_email: EmailStr
+    owner_password: str
+    phone: Optional[str] = None
+    plan: Optional[str] = "free"
+
+
+class PlanIn(BaseModel):
+    plan: str  # free | basic | pro
+
+
+class LadImportIn(BaseModel):
+    uuid: str
+
+
+PLAN_QUOTAS = {
+    "free": {"max_motoboys": 2, "max_orders_month": 50},
+    "basic": {"max_motoboys": 5, "max_orders_month": 500},
+    "pro": {"max_motoboys": 999, "max_orders_month": 999999},
+}
+
+
 # ============ AUTH ============
 @api.post("/auth/register")
 async def register(body: RegisterIn):
@@ -150,7 +174,7 @@ async def register(body: RegisterIn):
         "phone": body.phone, "lad_api_token": None,
         "lad_api_base": "https://api2.laddelivery.com.br",
         "waha_url": None, "waha_session": None,
-        "active": True, "created_at": now,
+        "plan": "free", "active": True, "created_at": now,
     })
     token = create_token(uid, "store")
     return {"token": token, "user": {"id": uid, "name": body.name, "email": body.email.lower(), "role": "store", "store_id": sid}}
@@ -177,6 +201,7 @@ async def admin_stores(user=Depends(require_admin)):
     for s in stores:
         s["motoboys_count"] = await db.motoboys.count_documents({"store_id": s["id"]})
         s["orders_count"] = await db.orders.count_documents({"store_id": s["id"]})
+        s.setdefault("plan", "free")
     return stores
 
 
@@ -194,6 +219,56 @@ async def admin_stats(user=Depends(require_admin)):
 @api.patch("/admin/stores/{sid}")
 async def admin_toggle_store(sid: str, body: Dict[str, Any], user=Depends(require_admin)):
     await db.stores.update_one({"id": sid}, {"$set": {"active": bool(body.get("active", True))}})
+    return {"ok": True}
+
+
+@api.post("/admin/stores")
+async def admin_create_store(body: AdminCreateStoreIn, user=Depends(require_admin)):
+    if await db.users.find_one({"email": body.owner_email.lower()}):
+        raise HTTPException(400, "Email já cadastrado")
+    if body.plan not in PLAN_QUOTAS:
+        raise HTTPException(400, "Plano inválido")
+    uid = str(uuid.uuid4())
+    sid = str(uuid.uuid4())
+    now = utcnow().isoformat()
+    await db.users.insert_one({
+        "id": uid, "name": body.owner_name, "email": body.owner_email.lower(),
+        "password": hash_pw(body.owner_password), "role": "store", "store_id": sid,
+        "created_at": now,
+    })
+    await db.stores.insert_one({
+        "id": sid, "name": body.store_name, "owner_id": uid,
+        "phone": body.phone, "lad_api_token": None,
+        "lad_api_base": "https://api2.laddelivery.com.br",
+        "plan": body.plan, "active": True, "created_at": now,
+    })
+    return {"id": sid, "plan": body.plan}
+
+
+@api.put("/admin/stores/{sid}/plan")
+async def admin_update_plan(sid: str, body: PlanIn, user=Depends(require_admin)):
+    if body.plan not in PLAN_QUOTAS:
+        raise HTTPException(400, "Plano inválido")
+    r = await db.stores.update_one({"id": sid}, {"$set": {"plan": body.plan}})
+    if r.matched_count == 0:
+        raise HTTPException(404, "Loja não encontrada")
+    return {"ok": True, "plan": body.plan}
+
+
+@api.get("/admin/plans")
+async def admin_plans(user=Depends(require_admin)):
+    return PLAN_QUOTAS
+
+
+@api.delete("/admin/stores/{sid}")
+async def admin_delete_store(sid: str, user=Depends(require_admin)):
+    s = await db.stores.find_one({"id": sid})
+    if not s:
+        raise HTTPException(404, "Loja não encontrada")
+    await db.users.delete_many({"store_id": sid})
+    await db.motoboys.delete_many({"store_id": sid})
+    await db.orders.delete_many({"store_id": sid})
+    await db.stores.delete_one({"id": sid})
     return {"ok": True}
 
 
@@ -223,6 +298,79 @@ async def lad_loja(user=Depends(require_store)):
     async with httpx.AsyncClient(timeout=15) as c:
         r = await c.get(f"{s['lad_api_base']}/v1/loja", headers={"Authorization": f"Bearer {s['lad_api_token']}"})
     return {"status": r.status_code, "data": r.json() if r.headers.get("content-type", "").startswith("application/json") else r.text}
+
+
+def _lad_to_internal(lad: Dict[str, Any]) -> Dict[str, Any]:
+    """Convert LAD /v1/pedidos response to our internal order fields."""
+    items = ", ".join([f"{i.get('quantidade', 1)}x {i.get('nome', '')}" for i in lad.get("itens", [])])
+    addr = lad.get("enderecoEntrega") or {}
+    endereco_parts = [addr.get("endereco"), addr.get("numero"), addr.get("bairro"), addr.get("cidade")]
+    endereco = ", ".join([p for p in endereco_parts if p]) or "Retirada na loja"
+    cliente = lad.get("cliente") or {}
+    status_map = {"E": "pending", "A": "preparing", "V": "preparing", "X": "dispatched",
+                  "D": "delivered", "P": "pending", "C": "canceled", "R": "canceled"}
+    status_code = (lad.get("status") or {}).get("codigo", "E")
+    return {
+        "customer_name": cliente.get("nome") or "Cliente LAD",
+        "customer_whatsapp": (cliente.get("telefone") or "").replace(" ", ""),
+        "address": endereco,
+        "items": items or "Pedido LAD",
+        "total": float(lad.get("valorTotal") or 0),
+        "payment_method": (lad.get("pagamento") or {}).get("forma", "—"),
+        "notes": lad.get("observacao"),
+        "status": status_map.get(status_code, "pending"),
+        "lad_uuid": lad.get("uuid"),
+    }
+
+
+@api.post("/store/lad/import")
+async def lad_import_order(body: LadImportIn, user=Depends(require_store)):
+    s = await db.stores.find_one({"id": user["store_id"]}, {"_id": 0})
+    if not s or not s.get("lad_api_token"):
+        raise HTTPException(400, "Configure o token LAD primeiro")
+    async with httpx.AsyncClient(timeout=15) as c:
+        r = await c.get(f"{s['lad_api_base']}/v1/pedidos/{body.uuid}",
+                        headers={"Authorization": f"Bearer {s['lad_api_token']}"})
+    if r.status_code != 200:
+        raise HTTPException(r.status_code, f"LAD: {r.text[:200]}")
+    lad = r.json()
+    # Upsert by lad_uuid within store
+    existing = await db.orders.find_one({"store_id": user["store_id"], "lad_uuid": lad.get("uuid")})
+    if existing:
+        await db.orders.update_one({"id": existing["id"]}, {"$set": _lad_to_internal(lad)})
+        doc = await db.orders.find_one({"id": existing["id"]}, {"_id": 0})
+        return {"imported": False, "updated": True, "order": doc}
+    oid = str(uuid.uuid4())
+    doc = {
+        "id": oid, "store_id": user["store_id"], **_lad_to_internal(lad),
+        "motoboy_id": None,
+        "tracking_token": secrets.token_urlsafe(12),
+        "motoboy_share_token": secrets.token_urlsafe(12),
+        "created_at": utcnow().isoformat(), "dispatched_at": None, "delivered_at": None,
+        "last_location": None,
+    }
+    await db.orders.insert_one(doc)
+    doc.pop("_id", None)
+    return {"imported": True, "updated": False, "order": doc}
+
+
+@api.post("/store/lad/refresh")
+async def lad_refresh_all(user=Depends(require_store)):
+    s = await db.stores.find_one({"id": user["store_id"]}, {"_id": 0})
+    if not s or not s.get("lad_api_token"):
+        raise HTTPException(400, "Configure o token LAD primeiro")
+    active = await db.orders.find({"store_id": user["store_id"], "lad_uuid": {"$ne": None},
+                                    "status": {"$nin": ["delivered", "canceled"]}}, {"_id": 0, "id": 1, "lad_uuid": 1}).to_list(50)
+    updated = 0
+    async with httpx.AsyncClient(timeout=15) as c:
+        for o in active:
+            r = await c.get(f"{s['lad_api_base']}/v1/pedidos/{o['lad_uuid']}",
+                            headers={"Authorization": f"Bearer {s['lad_api_token']}"})
+            if r.status_code == 200:
+                lad = r.json()
+                await db.orders.update_one({"id": o["id"]}, {"$set": {"status": _lad_to_internal(lad)["status"]}})
+                updated += 1
+    return {"updated": updated, "total": len(active)}
 
 
 # ============ MOTOBOYS ============
