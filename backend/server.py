@@ -174,6 +174,7 @@ async def register(body: RegisterIn):
         "phone": body.phone, "lad_api_token": None,
         "lad_api_base": "https://api2.laddelivery.com.br",
         "waha_url": None, "waha_session": None,
+        "webhook_token": secrets.token_urlsafe(16),
         "plan": "free", "active": True, "created_at": now,
     })
     token = create_token(uid, "store")
@@ -240,6 +241,7 @@ async def admin_create_store(body: AdminCreateStoreIn, user=Depends(require_admi
         "id": sid, "name": body.store_name, "owner_id": uid,
         "phone": body.phone, "lad_api_token": None,
         "lad_api_base": "https://api2.laddelivery.com.br",
+        "webhook_token": secrets.token_urlsafe(16),
         "plan": body.plan, "active": True, "created_at": now,
     })
     return {"id": sid, "plan": body.plan}
@@ -323,35 +325,100 @@ def _lad_to_internal(lad: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-@api.post("/store/lad/import")
-async def lad_import_order(body: LadImportIn, user=Depends(require_store)):
-    s = await db.stores.find_one({"id": user["store_id"]}, {"_id": 0})
-    if not s or not s.get("lad_api_token"):
-        raise HTTPException(400, "Configure o token LAD primeiro")
+async def _geocode(query: str):
+    """Best-effort geocoding via Nominatim (free, no key). Returns (lat, lng) or None."""
+    if not query:
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=8, headers={"User-Agent": "zappedidos-tracker/1.0"}) as c:
+            r = await c.get("https://nominatim.openstreetmap.org/search",
+                            params={"q": query, "format": "json", "limit": 1, "countrycodes": "br"})
+            if r.status_code == 200 and r.json():
+                d = r.json()[0]
+                return float(d["lat"]), float(d["lon"])
+    except Exception:
+        pass
+    return None
+
+
+def _haversine_km(a, b):
+    from math import radians, sin, cos, asin, sqrt
+    lat1, lon1 = radians(a[0]), radians(a[1])
+    lat2, lon2 = radians(b[0]), radians(b[1])
+    dlat = lat2 - lat1; dlon = lon2 - lon1
+    h = sin(dlat/2)**2 + cos(lat1)*cos(lat2)*sin(dlon/2)**2
+    return 2 * 6371 * asin(sqrt(h))
+
+
+async def _import_lad_uuid(store: Dict[str, Any], lad_uuid: str) -> Dict[str, Any]:
     async with httpx.AsyncClient(timeout=15) as c:
-        r = await c.get(f"{s['lad_api_base']}/v1/pedidos/{body.uuid}",
-                        headers={"Authorization": f"Bearer {s['lad_api_token']}"})
+        r = await c.get(f"{store['lad_api_base']}/v1/pedidos/{lad_uuid}",
+                        headers={"Authorization": f"Bearer {store['lad_api_token']}"})
     if r.status_code != 200:
         raise HTTPException(r.status_code, f"LAD: {r.text[:200]}")
     lad = r.json()
-    # Upsert by lad_uuid within store
-    existing = await db.orders.find_one({"store_id": user["store_id"], "lad_uuid": lad.get("uuid")})
+    internal = _lad_to_internal(lad)
+    existing = await db.orders.find_one({"store_id": store["id"], "lad_uuid": lad.get("uuid")})
     if existing:
-        await db.orders.update_one({"id": existing["id"]}, {"$set": _lad_to_internal(lad)})
+        await db.orders.update_one({"id": existing["id"]}, {"$set": internal})
         doc = await db.orders.find_one({"id": existing["id"]}, {"_id": 0})
         return {"imported": False, "updated": True, "order": doc}
+    dest = await _geocode(internal["address"])
     oid = str(uuid.uuid4())
     doc = {
-        "id": oid, "store_id": user["store_id"], **_lad_to_internal(lad),
+        "id": oid, "store_id": store["id"], **internal,
         "motoboy_id": None,
         "tracking_token": secrets.token_urlsafe(12),
         "motoboy_share_token": secrets.token_urlsafe(12),
+        "dest_lat": dest[0] if dest else None,
+        "dest_lng": dest[1] if dest else None,
         "created_at": utcnow().isoformat(), "dispatched_at": None, "delivered_at": None,
         "last_location": None,
     }
     await db.orders.insert_one(doc)
     doc.pop("_id", None)
     return {"imported": True, "updated": False, "order": doc}
+
+
+@api.post("/store/lad/import")
+async def lad_import_order(body: LadImportIn, user=Depends(require_store)):
+    s = await db.stores.find_one({"id": user["store_id"]}, {"_id": 0})
+    if not s or not s.get("lad_api_token"):
+        raise HTTPException(400, "Configure o token LAD primeiro")
+    return await _import_lad_uuid(s, body.uuid)
+
+
+# ============ PUBLIC LAD WEBHOOK ============
+@api.post("/webhook/lad/{webhook_token}")
+async def lad_webhook(webhook_token: str, payload: Dict[str, Any]):
+    s = await db.stores.find_one({"webhook_token": webhook_token}, {"_id": 0})
+    if not s:
+        raise HTTPException(404, "Webhook não encontrado")
+    if not s.get("lad_api_token"):
+        raise HTTPException(400, "Loja sem token LAD")
+    lad_uuid = payload.get("uuid") or payload.get("pedido_uuid") or (payload.get("data") or {}).get("uuid")
+    if not lad_uuid:
+        raise HTTPException(400, "Payload sem uuid")
+    result = await _import_lad_uuid(s, lad_uuid)
+    return {"ok": True, **result}
+
+
+@api.get("/store/webhook-url")
+async def get_webhook_url(user=Depends(require_store)):
+    s = await db.stores.find_one({"id": user["store_id"]}, {"_id": 0, "webhook_token": 1})
+    if not s or not s.get("webhook_token"):
+        # backfill if store was created before this feature
+        tok = secrets.token_urlsafe(16)
+        await db.stores.update_one({"id": user["store_id"]}, {"$set": {"webhook_token": tok}})
+        return {"token": tok}
+    return {"token": s["webhook_token"]}
+
+
+@api.post("/store/webhook-url/rotate")
+async def rotate_webhook_url(user=Depends(require_store)):
+    tok = secrets.token_urlsafe(16)
+    await db.stores.update_one({"id": user["store_id"]}, {"$set": {"webhook_token": tok}})
+    return {"token": tok}
 
 
 @api.post("/store/lad/refresh")
@@ -418,11 +485,17 @@ async def list_orders(user=Depends(require_store)):
 @api.post("/orders")
 async def create_order(body: OrderIn, user=Depends(require_store)):
     oid = str(uuid.uuid4())
+    dest_lat, dest_lng = body.lat, body.lng
+    if dest_lat is None or dest_lng is None:
+        g = await _geocode(body.address)
+        if g:
+            dest_lat, dest_lng = g
     doc = {
         "id": oid, "store_id": user["store_id"], **body.dict(),
         "status": "pending", "motoboy_id": None,
         "tracking_token": secrets.token_urlsafe(12),
         "motoboy_share_token": secrets.token_urlsafe(12),
+        "dest_lat": dest_lat, "dest_lng": dest_lng,
         "created_at": utcnow().isoformat(), "dispatched_at": None, "delivered_at": None,
         "last_location": None,
     }
@@ -520,10 +593,26 @@ async def post_location(token: str, body: LocationIn):
 
 @api.get("/track/{token}/location")
 async def get_last_location(token: str):
-    o = await db.orders.find_one({"tracking_token": token}, {"_id": 0, "last_location": 1, "status": 1})
+    o = await db.orders.find_one({"tracking_token": token}, {"_id": 0, "last_location": 1, "status": 1,
+                                                              "dest_lat": 1, "dest_lng": 1})
     if not o:
         raise HTTPException(404, "Não encontrado")
-    return o
+    eta_min = None
+    if o.get("last_location") and o.get("dest_lat") is not None and o.get("dest_lng") is not None:
+        km = _haversine_km((o["last_location"]["lat"], o["last_location"]["lng"]),
+                            (o["dest_lat"], o["dest_lng"]))
+        # assume avg 25 km/h in urban delivery
+        eta_min = max(1, int(round(km / 25 * 60)))
+    return {**o, "eta_minutes": eta_min}
+
+
+@api.get("/track/{token}/route")
+async def get_route(token: str):
+    o = await db.orders.find_one({"tracking_token": token}, {"_id": 0, "id": 1, "dest_lat": 1, "dest_lng": 1})
+    if not o:
+        raise HTTPException(404, "Não encontrado")
+    points = await db.locations.find({"order_id": o["id"]}, {"_id": 0, "lat": 1, "lng": 1, "at": 1}).sort("at", 1).to_list(500)
+    return {"points": points, "destination": {"lat": o.get("dest_lat"), "lng": o.get("dest_lng")}}
 
 
 # ============ SEED ============

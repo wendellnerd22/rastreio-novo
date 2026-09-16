@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import { MapContainer, TileLayer, Marker, Popup, useMap } from "react-leaflet";
+import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from "react-leaflet";
 import L from "leaflet";
 import { MapPin, Bike, Store, Package, Clock, CheckCircle2 } from "lucide-react";
 import axios from "axios";
@@ -21,6 +21,14 @@ const storeIcon = new L.DivIcon({
     <div style="transform:rotate(45deg);color:white;font-size:18px;">🏪</div>
   </div>`,
   iconSize: [44, 44], iconAnchor: [22, 44],
+});
+
+const homeIcon = new L.DivIcon({
+  className: "custom-marker",
+  html: `<div style="background:#F59E0B;width:40px;height:40px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);border:3px solid #fff;box-shadow:0 4px 12px rgba(0,0,0,0.4);display:grid;place-items:center;">
+    <div style="transform:rotate(45deg);color:white;font-size:16px;">🏠</div>
+  </div>`,
+  iconSize: [40, 40], iconAnchor: [20, 40],
 });
 
 function FitBounds({ points }) {
@@ -44,18 +52,22 @@ export default function CustomerTrack() {
   const { token } = useParams();
   const [data, setData] = useState(null);
   const [loc, setLoc] = useState(null);
+  const [eta, setEta] = useState(null);
+  const [route, setRoute] = useState({ points: [], destination: null });
   const [err, setErr] = useState(null);
 
   useEffect(() => {
     let alive = true;
     const load = async () => {
       try {
-        const [d, l] = await Promise.all([
+        const [d, l, r] = await Promise.all([
           axios.get(`${API}/track/${token}`),
           axios.get(`${API}/track/${token}/location`).catch(() => ({ data: {} })),
+          axios.get(`${API}/track/${token}/route`).catch(() => ({ data: { points: [], destination: null } })),
         ]);
         if (!alive) return;
-        setData(d.data); setLoc(l.data.last_location);
+        setData(d.data); setLoc(l.data.last_location); setEta(l.data.eta_minutes);
+        setRoute(r.data);
       } catch (e) { if (alive) setErr(e.response?.data?.detail || "Rastreamento indisponível"); }
     };
     load();
@@ -70,6 +82,9 @@ export default function CustomerTrack() {
   const activeIdx = STATUS_STEPS.findIndex(s => s.key === order.status);
   const points = [];
   if (loc) points.push([loc.lat, loc.lng]);
+  const dest = route.destination && route.destination.lat ? [route.destination.lat, route.destination.lng] : null;
+  if (dest) points.push(dest);
+  const path = (route.points || []).map(p => [p.lat, p.lng]);
 
   return (
     <div className="min-h-screen bg-[#0B0F17] text-slate-100">
@@ -115,13 +130,22 @@ export default function CustomerTrack() {
                 <MapPin className="w-4 h-4 text-indigo-400" />
                 <span className="font-display font-bold">Localização em tempo real</span>
               </div>
-              {loc && <div className="text-xs text-emerald-400 flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-400 pulse-dot" /> Ao vivo</div>}
+              <div className="flex items-center gap-4">
+                {eta !== null && (
+                  <div data-testid="track-eta" className="text-sm">
+                    <span className="text-slate-500">ETA</span> <span className="text-amber-400 font-display font-bold">~{eta} min</span>
+                  </div>
+                )}
+                {loc && <div className="text-xs text-emerald-400 flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-400 pulse-dot" /> Ao vivo</div>}
+              </div>
             </div>
             <div className="h-[420px]">
               {loc ? (
                 <MapContainer center={[loc.lat, loc.lng]} zoom={15} style={{height: "100%", width: "100%"}} className="rounded-b-2xl">
                   <TileLayer attribution='&copy; OpenStreetMap' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+                  {path.length > 1 && <Polyline positions={path} pathOptions={{color: "#6366F1", weight: 4, opacity: 0.8, dashArray: "6 8"}} />}
                   <Marker position={[loc.lat, loc.lng]} icon={bikeIcon}><Popup>{data.motoboy?.name || "Motoboy"}</Popup></Marker>
+                  {dest && <Marker position={dest} icon={homeIcon}><Popup>Destino</Popup></Marker>}
                   <FitBounds points={points} />
                 </MapContainer>
               ) : (

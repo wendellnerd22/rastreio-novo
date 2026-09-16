@@ -39,10 +39,13 @@ export default function StoreDashboard() {
   const [openImport, setOpenImport] = useState(false);
   const [ladUuid, setLadUuid] = useState("");
   const [refreshing, setRefreshing] = useState(false);
+  const [webhookToken, setWebhookToken] = useState("");
+  const [copiedWH, setCopiedWH] = useState(false);
 
   const loadAll = async () => {
-    const [m, o, s] = await Promise.all([api.get("/motoboys"), api.get("/orders"), api.get("/store/me")]);
+    const [m, o, s, w] = await Promise.all([api.get("/motoboys"), api.get("/orders"), api.get("/store/me"), api.get("/store/webhook-url").catch(() => ({data: {}}))]);
     setMotoboys(m.data); setOrders(o.data); setStore(s.data); setLadToken(s.data.lad_api_token || "");
+    if (w.data.token) setWebhookToken(w.data.token);
   };
   useEffect(() => { loadAll(); const t = setInterval(loadAll, 15000); return () => clearInterval(t); }, []);
 
@@ -92,6 +95,11 @@ export default function StoreDashboard() {
     } catch (e) { toast.error(e.response?.data?.detail || "Falha"); }
     finally { setRefreshing(false); }
   };
+  const rotateWebhook = async () => {
+    try { const { data } = await api.post("/store/webhook-url/rotate"); setWebhookToken(data.token); toast.success("URL rotacionada"); }
+    catch { toast.error("Falha"); }
+  };
+  const webhookUrl = webhookToken ? `${window.location.origin.replace(/\/$/, "")}${webhookToken ? "" : ""}${process.env.REACT_APP_BACKEND_URL ? "" : ""}` : "";
   const testLad = async () => {
     try { const { data } = await api.get("/store/lad/loja"); toast.success(`Conectado: ${data.data?.nome || "OK"}`); }
     catch (e) { toast.error(e.response?.data?.detail || "Falha"); }
@@ -294,6 +302,32 @@ export default function StoreDashboard() {
               </div>
               <div className="mt-6 pt-6 border-t border-slate-800 text-xs text-slate-500">
                 Base URL: <span className="text-slate-300 font-mono">https://api2.laddelivery.com.br</span>
+              </div>
+            </Card>
+
+            <Card className="card-dark border-slate-800 p-6 max-w-2xl mt-6" data-testid="webhook-card">
+              <h2 className="font-display font-bold text-2xl mb-2">Webhook LAD</h2>
+              <p className="text-slate-400 text-sm mb-4">Configure a LAD (ou qualquer sistema) para chamar essa URL com <code className="text-slate-300">{"{"} "uuid": "&lt;pedido_uuid&gt;" {"}"}</code>. O pedido será importado automaticamente.</p>
+              <Label>URL do Webhook (POST)</Label>
+              <div className="flex gap-2 mt-1">
+                <Input data-testid="webhook-url" readOnly value={webhookToken ? `${process.env.REACT_APP_BACKEND_URL}/api/webhook/lad/${webhookToken}` : "…"}
+                  className="bg-slate-900 border-slate-800 font-mono text-xs" />
+                <Button data-testid="webhook-copy-btn" onClick={() => { navigator.clipboard.writeText(`${process.env.REACT_APP_BACKEND_URL}/api/webhook/lad/${webhookToken}`); setCopiedWH(true); setTimeout(() => setCopiedWH(false), 1500); }} variant="outline" className="border-slate-700">
+                  {copiedWH ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+                </Button>
+              </div>
+              <div className="mt-4 flex gap-2">
+                <Button data-testid="webhook-rotate-btn" onClick={rotateWebhook} variant="outline" size="sm" className="border-rose-700 text-rose-300 hover:bg-rose-950">
+                  <RefreshCw className="w-3 h-3 mr-2" /> Rotacionar URL
+                </Button>
+              </div>
+              <div className="mt-6 pt-6 border-t border-slate-800">
+                <div className="text-xs text-slate-500 mb-2">Exemplo (curl):</div>
+                <pre className="text-xs bg-slate-950 border border-slate-800 rounded-lg p-3 text-slate-400 overflow-x-auto">
+{`curl -X POST '${process.env.REACT_APP_BACKEND_URL}/api/webhook/lad/${webhookToken || "SEU_TOKEN"}' \\
+  -H 'Content-Type: application/json' \\
+  -d '{"uuid": "b3f6a8f0-1234-4c56-9abc-def012345678"}'`}
+                </pre>
               </div>
             </Card>
           </TabsContent>
