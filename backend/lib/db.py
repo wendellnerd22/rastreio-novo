@@ -26,6 +26,8 @@ INDEXES: dict[str, list[IndexModel]] = {
     "orders": [
         IndexModel([("id", ASCENDING)], name="id", unique=True),
         IndexModel([("store_id", ASCENDING), ("created_at", DESCENDING)], name="store_created"),
+        IndexModel([("tracking_token", ASCENDING)], name="tracking_token"),
+        IndexModel([("motoboy_share_token", ASCENDING)], name="motoboy_share_token"),
     ],
     "chat_messages": [
         IndexModel([("store_id", ASCENDING), ("session_id", ASCENDING), ("created_at", ASCENDING)],
@@ -57,6 +59,15 @@ INDEXES: dict[str, list[IndexModel]] = {
     "motoboys": [
         IndexModel([("id", ASCENDING)], name="id", unique=True),
         IndexModel([("store_id", ASCENDING), ("ativo", ASCENDING)], name="store_ativo"),
+    ],
+    "locations": [
+        IndexModel([("order_id", ASCENDING), ("at", DESCENDING)], name="order_at"),
+    ],
+    "notes": [
+        IndexModel([("store_id", ASCENDING), ("at", DESCENDING)], name="store_at"),
+    ],
+    "push_subs": [
+        IndexModel([("order_id", ASCENDING), ("endpoint", ASCENDING)], name="order_endpoint", unique=True),
     ],
 }
 

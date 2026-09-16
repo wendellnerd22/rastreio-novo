@@ -13,13 +13,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/context/AuthContext";
 
-// helpers PT-BR ↔ payload novo do backend
-const toOrder = (o) => ({
-  customer_name: o.cliente_nome, customer_whatsapp: o.cliente_whatsapp,
-  address: o.endereco, items: o.itens, total: o.total,
-  payment_method: o.forma_pagamento, notes: o.observacao,
-});
-
 const STATUS_LABELS = {
   pending: { label: "Pendente", color: "bg-amber-500/20 text-amber-300 border-amber-500/30" },
   preparing: { label: "Em preparo", color: "bg-blue-500/20 text-blue-300 border-blue-500/30" },
@@ -42,6 +35,7 @@ export default function StoreDashboard() {
   const [mForm, setMForm] = useState({ name: "", whatsapp: "", vehicle: "Moto", plate: "" });
   const [oForm, setOForm] = useState({ customer_name: "", customer_whatsapp: "", address: "", items: "", total: 0, payment_method: "PIX", notes: "" });
   const [ladToken, setLadToken] = useState("");
+  const [ladDemo, setLadDemo] = useState(false);
   const [dispatchMotoboy, setDispatchMotoboy] = useState("");
   const [openImport, setOpenImport] = useState(false);
   const [ladUuid, setLadUuid] = useState("");
@@ -52,13 +46,14 @@ export default function StoreDashboard() {
   const [notes, setNotes] = useState([]);
 
   const loadAll = async () => {
+    try {
     const [m, o, s, w, a, n] = await Promise.all([
       api.get("/motoboys"), api.get("/orders"), api.get("/store/me"),
       api.get("/store/webhook-url").catch(() => ({data: {}})),
       api.get("/alerts").catch(() => ({data: {alerts: []}})),
       api.get("/notes").catch(() => ({data: []})),
     ]);
-    setMotoboys(m.data); setOrders(o.data); setStore(s.data); setLadToken(s.data.lad_api_token || "");
+    setMotoboys(m.data); setOrders(o.data); setStore(s.data); setLadToken(s.data.lad_token || ""); setLadDemo(!!s.data.lad_demo);
     if (w.data.token) setWebhookToken(w.data.token);
     // toast new alerts
     const prevIds = new Set(alerts.map(x => `${x.order_id}-${x.type}`));
@@ -68,6 +63,10 @@ export default function StoreDashboard() {
     });
     setAlerts(a.data.alerts || []);
     setNotes(n.data || []);
+    } catch (e) {
+      if (e.response?.status === 401) { logout(); nav("/login"); }
+      else toast.error(e.response?.data?.detail || "Falha ao carregar dados");
+    }
   };
   useEffect(() => { loadAll(); const t = setInterval(loadAll, 15000); return () => clearInterval(t); }, []);
 
@@ -104,7 +103,10 @@ export default function StoreDashboard() {
     } catch (e) { toast.error(e.response?.data?.detail || "Erro"); }
   };
   const changeStatus = async (id, status) => { await api.patch(`/orders/${id}/status`, { status }); toast.success("Status atualizado"); loadAll(); };
-  const saveLad = async () => { await api.put("/store/lad", { token: ladToken, demo: false }); toast.success("Token LAD salvo"); loadAll(); };
+  const saveLad = async () => {
+    try { await api.put("/store/lad", { token: ladToken, demo: ladDemo }); toast.success("Configuração LAD salva"); loadAll(); }
+    catch (e) { toast.error(e.response?.data?.detail || "Falha"); }
+  };
   const importLad = async () => {
     if (!ladUuid.trim()) { toast.error("Informe o UUID do pedido LAD"); return; }
     try {
@@ -146,11 +148,11 @@ export default function StoreDashboard() {
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-xl bg-indigo-500 grid place-items-center"><Zap className="w-5 h-5" /></div>
             <div>
-              <div className="font-display font-bold text-lg">{store?.name || "Minha Loja"}</div>
+              <div className="font-display font-bold text-lg">{store?.nome || "Minha Loja"}</div>
               <div className="text-xs text-slate-500">{user?.email}</div>
             </div>
           </div>
-          <Button data-testid="store-logout-btn" onClick={() => { logout(); nav("/"); }} variant="ghost" className="text-slate-400 hover:text-white">
+          <Button data-testid="store-logout-btn" onClick={async () => { await logout(); nav("/"); }} variant="ghost" className="text-slate-400 hover:text-white">
             <LogOut className="w-4 h-4 mr-2" /> Sair
           </Button>
         </div>
@@ -174,7 +176,7 @@ export default function StoreDashboard() {
             <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
               <h2 className="font-display font-bold text-2xl">Pedidos</h2>
               <div className="flex items-center gap-2 flex-wrap">
-                {store?.lad_api_token && (
+                {(store?.lad_token || store?.lad_demo) && (
                   <>
                     <Button data-testid="lad-refresh-btn" onClick={refreshLad} disabled={refreshing} variant="outline" className="border-slate-700">
                       <RefreshCw className={`w-4 h-4 mr-2 ${refreshing ? "animate-spin" : ""}`} /> Sincronizar LAD
@@ -384,6 +386,10 @@ export default function StoreDashboard() {
               <Label>Bearer Token</Label>
               <Input data-testid="lad-token-input" value={ladToken} onChange={e => setLadToken(e.target.value)} type="password"
                 className="bg-slate-900 border-slate-800 mt-1 mb-4 font-mono" placeholder="SEU_TOKEN" />
+              <label className="flex items-center gap-2 text-sm text-slate-300 mb-4 cursor-pointer">
+                <input data-testid="lad-demo-checkbox" type="checkbox" checked={ladDemo} onChange={e => setLadDemo(e.target.checked)} className="accent-indigo-500" />
+                Modo demo (sem token — usa pedidos simulados da LAD)
+              </label>
               <div className="flex gap-3">
                 <Button data-testid="lad-save-btn" onClick={saveLad} className="bg-indigo-500 hover:bg-indigo-600">Salvar</Button>
                 <Button data-testid="lad-test-btn" onClick={testLad} variant="outline" className="border-slate-700">Testar conexão</Button>

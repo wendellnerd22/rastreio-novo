@@ -27,8 +27,13 @@ export default function AdminDashboard() {
   const [form, setForm] = useState({ store_name: "", owner_name: "", owner_email: "", owner_password: "", phone: "", plan: "free" });
 
   const load = async () => {
-    const [s, st] = await Promise.all([api.get("/admin/stats"), api.get("/admin/stores")]);
-    setStats(s.data); setStores(st.data);
+    try {
+      const [s, st] = await Promise.all([api.get("/admin/stats"), api.get("/admin/stores")]);
+      setStats(s.data); setStores(st.data);
+    } catch (e) {
+      if (e.response?.status === 401) { logout(); nav("/login"); }
+      else toast.error(e.response?.data?.detail || "Falha ao carregar");
+    }
   };
   useEffect(() => { load(); }, []);
 
@@ -73,10 +78,10 @@ export default function AdminDashboard() {
             <div className="w-9 h-9 rounded-xl bg-indigo-500 grid place-items-center"><Zap className="w-5 h-5" /></div>
             <div>
               <div className="font-display font-bold text-lg">Painel Admin</div>
-              <div className="text-xs text-slate-500">Revendedor · {user?.name}</div>
+              <div className="text-xs text-slate-500">Revendedor · {user?.nome}</div>
             </div>
           </div>
-          <Button data-testid="admin-logout-btn" onClick={() => { logout(); nav("/"); }} variant="ghost" className="text-slate-400 hover:text-white">
+          <Button data-testid="admin-logout-btn" onClick={async () => { await logout(); nav("/"); }} variant="ghost" className="text-slate-400 hover:text-white">
             <LogOut className="w-4 h-4 mr-2" /> Sair
           </Button>
         </div>

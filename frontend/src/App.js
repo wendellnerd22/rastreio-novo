@@ -17,7 +17,7 @@ function Protected({ role, children }) {
   if (!user) return <Navigate to="/login" replace />;
   // "role" prop expects legacy "store"; new backend uses "lojista"
   const roles = role === "store" ? ["lojista"] : role ? [role] : null;
-  if (roles && !roles.includes(user.role)) return <Navigate to="/" replace />;
+  if (roles && !roles.includes(user.role)) return <Navigate to={user.role === "admin" ? "/admin" : "/dashboard"} replace />;
   return children;
 }
 
@@ -30,7 +30,7 @@ function App() {
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
           <Route path="/admin" element={<Protected role="admin"><AdminDashboard /></Protected>} />
-          <Route path="/dashboard" element={<Protected><StoreDashboard /></Protected>} />
+          <Route path="/dashboard" element={<Protected role="store"><StoreDashboard /></Protected>} />
           <Route path="/track/:token" element={<CustomerTrack />} />
           <Route path="/motoboy/:token" element={<MotoboyShare />} />
         </Routes>
