@@ -1,0 +1,24 @@
+{
+  "summary": "Backend validation for ZapPedidos tracker API. All 12 requested behaviors verified through 17 assertions against the public URL. Auth (JWT), RBAC (admin vs store), tenant isolation, order lifecycle (create -> dispatch), public tracker (auth-less, whatsapp-stripped), motoboy live location, and LAD config all pass.",
+  "tested_scope": ["backend", "auth", "integration"],
+  "passed": [
+    "POST /api/auth/register creates store user + store_id, returns JWT",
+    "POST /api/auth/login (admin) returns role=admin",
+    "GET /api/auth/me returns current user with bearer token",
+    "GET /api/admin/stats -> 403 for store user, 200 for admin",
+    "GET /api/admin/stores returns motoboys_count + orders_count",
+    "POST /api/motoboys scoped to caller store; GET lists only own",
+    "Tenant isolation: store B does NOT see store A motoboys or order (404)",
+    "POST /api/orders returns pending status with tracking_token and motoboy_share_token",
+    "POST /api/orders/{id}/dispatch sets status=dispatched and motoboy_id",
+    "GET /api/track/{token} (no auth) returns order+store+motoboy WITHOUT customer_whatsapp",
+    "POST /api/motoboy-track/{token}/location updates last_location",
+    "GET /api/track/{token}/location returns last_location payload",
+    "PUT /api/store/lad persists api_token (verified via /store/me)"
+  ],
+  "failed": [],
+  "action_items": [],
+  "success_rate": {"backend": "100%", "frontend": "skipped"},
+  "retest_needed": false,
+  "full_testing_deferred": true
+}
