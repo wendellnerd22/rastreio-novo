@@ -11,6 +11,8 @@ from datetime import datetime, timezone, timedelta
 import bcrypt
 import jwt as pyjwt
 import httpx
+import json as _json
+from pywebpush import webpush, WebPushException
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -22,6 +24,10 @@ db = client[os.environ['DB_NAME']]
 JWT_SECRET = os.environ.get('JWT_SECRET', 'zappedidos-dev-secret-change-me')
 JWT_ALG = 'HS256'
 JWT_EXP_HOURS = 24 * 7
+VAPID_PUBLIC_KEY = os.environ.get('VAPID_PUBLIC_KEY', '')
+VAPID_PRIVATE_KEY = os.environ.get('VAPID_PRIVATE_KEY', '')
+VAPID_CLAIMS = {"sub": os.environ.get('VAPID_CLAIM_EMAIL', 'mailto:noreply@zappedidos.com')}
+PUSH_RADIUS_KM = 0.5
 
 app = FastAPI(title="ZapPedidos + LAD Delivery Tracker API")
 api = APIRouter(prefix="/api")
@@ -151,6 +157,11 @@ class LadImportIn(BaseModel):
 
 class NoteIn(BaseModel):
     message: str
+
+
+class PushSubscribeIn(BaseModel):
+    endpoint: str
+    keys: Dict[str, str]
 
 
 PLAN_QUOTAS = {
@@ -584,6 +595,23 @@ async def motoboy_track_info(token: str):
     }
 
 
+def _send_push(sub: Dict[str, Any], title: str, body: str, url: str) -> bool:
+    if not VAPID_PRIVATE_KEY:
+        return False
+    try:
+        webpush(
+            subscription_info={"endpoint": sub["endpoint"], "keys": sub["keys"]},
+            data=_json.dumps({"title": title, "body": body, "url": url}),
+            vapid_private_key=VAPID_PRIVATE_KEY,
+            vapid_claims=dict(VAPID_CLAIMS),
+        )
+        return True
+    except WebPushException:
+        return False
+    except Exception:
+        return False
+
+
 @api.post("/motoboy-track/{token}/location")
 async def post_location(token: str, body: LocationIn):
     o = await db.orders.find_one({"motoboy_share_token": token})
@@ -592,6 +620,41 @@ async def post_location(token: str, body: LocationIn):
     loc = {**body.dict(), "at": utcnow().isoformat()}
     await db.orders.update_one({"id": o["id"]}, {"$set": {"last_location": loc}})
     await db.locations.insert_one({"order_id": o["id"], **loc})
+    # Near-arrival push: if within radius and not yet pushed
+    if o.get("dest_lat") is not None and o.get("dest_lng") is not None and not o.get("push_arrival_sent"):
+        km = _haversine_km((body.lat, body.lng), (o["dest_lat"], o["dest_lng"]))
+        if km <= PUSH_RADIUS_KM:
+            subs = await db.push_subs.find({"order_id": o["id"]}, {"_id": 0}).to_list(20)
+            store = await db.stores.find_one({"id": o["store_id"]}, {"_id": 0, "name": 1})
+            url = f"/track/{o['tracking_token']}"
+            sent = 0
+            for s in subs:
+                if _send_push(s, f"🛵 Está chegando!",
+                                f"O entregador da {store.get('name', 'loja')} está a menos de 500m. Prepare-se para receber.",
+                                url):
+                    sent += 1
+            if sent:
+                await db.orders.update_one({"id": o["id"]}, {"$set": {"push_arrival_sent": utcnow().isoformat()}})
+    return {"ok": True}
+
+
+@api.get("/push/vapid-public")
+async def vapid_public():
+    return {"key": VAPID_PUBLIC_KEY}
+
+
+@api.post("/track/{token}/push-subscribe")
+async def push_subscribe(token: str, body: PushSubscribeIn):
+    o = await db.orders.find_one({"tracking_token": token}, {"_id": 0, "id": 1})
+    if not o:
+        raise HTTPException(404, "Rastreamento não encontrado")
+    # Upsert by endpoint
+    await db.push_subs.update_one(
+        {"order_id": o["id"], "endpoint": body.endpoint},
+        {"$set": {"order_id": o["id"], "endpoint": body.endpoint, "keys": body.keys,
+                   "at": utcnow().isoformat()}},
+        upsert=True,
+    )
     return {"ok": True}
 
 

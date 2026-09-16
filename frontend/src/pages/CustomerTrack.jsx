@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from "react-leaflet";
 import L from "leaflet";
-import { MapPin, Bike, Store, Package, Clock, CheckCircle2, MessageSquarePlus, Send } from "lucide-react";
+import { MapPin, Bike, Store, Package, Clock, CheckCircle2, MessageSquarePlus, Send, BellRing } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
@@ -10,6 +10,15 @@ import { toast } from "sonner";
 import axios from "axios";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+
+function urlBase64ToUint8Array(base64String) {
+  const padding = "=".repeat((4 - base64String.length % 4) % 4);
+  const b64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(b64);
+  const out = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; ++i) out[i] = raw.charCodeAt(i);
+  return out;
+}
 
 // Custom marker icons
 const bikeIcon = new L.DivIcon({
@@ -62,6 +71,31 @@ export default function CustomerTrack() {
   const [openNote, setOpenNote] = useState(false);
   const [note, setNote] = useState("");
   const [sending, setSending] = useState(false);
+  const [pushEnabled, setPushEnabled] = useState(false);
+  const [pushLoading, setPushLoading] = useState(false);
+
+  const enablePush = async () => {
+    setPushLoading(true);
+    try {
+      if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+        toast.error("Notificações não suportadas neste navegador"); return;
+      }
+      const perm = await Notification.requestPermission();
+      if (perm !== "granted") { toast.error("Permissão negada"); return; }
+      const reg = await navigator.serviceWorker.register("/sw.js");
+      const { data: vapid } = await axios.get(`${API}/push/vapid-public`);
+      if (!vapid.key) { toast.error("Push não configurado"); return; }
+      const sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(vapid.key),
+      });
+      const s = sub.toJSON();
+      await axios.post(`${API}/track/${token}/push-subscribe`, { endpoint: s.endpoint, keys: s.keys });
+      setPushEnabled(true);
+      toast.success("Você será avisado quando o entregador estiver perto");
+    } catch (e) { toast.error("Falha ao ativar: " + (e.message || "")); }
+    finally { setPushLoading(false); }
+  };
 
   const sendNote = async () => {
     if (!note.trim()) { toast.error("Escreva uma mensagem"); return; }
@@ -195,6 +229,19 @@ export default function CustomerTrack() {
           <div className="text-slate-300 text-sm whitespace-pre-line">{order.items}</div>
           {order.notes && <div className="mt-3 pt-3 border-t border-slate-800 text-xs text-slate-500">Obs: {order.notes}</div>}
         </div>
+
+        {order.status === "dispatched" && !pushEnabled && (
+          <Button data-testid="enable-push-btn" onClick={enablePush} disabled={pushLoading}
+            className="w-full bg-amber-500 hover:bg-amber-600 text-slate-950 font-semibold h-12">
+            <BellRing className="w-4 h-4 mr-2" />
+            {pushLoading ? "Ativando…" : "Avisar-me quando o entregador estiver a 500m"}
+          </Button>
+        )}
+        {pushEnabled && (
+          <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 text-center text-sm text-emerald-300" data-testid="push-active">
+            🔔 Notificações ativas — vamos te avisar quando o entregador chegar perto
+          </div>
+        )}
 
         <Dialog open={openNote} onOpenChange={setOpenNote}>
           <DialogTrigger asChild>
