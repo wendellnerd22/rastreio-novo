@@ -18,7 +18,7 @@ export default function Landing() {
         </div>
         <div className="flex items-center gap-3">
           {user ? (
-            <Link to={user.role === "admin" ? "/admin" : "/dashboard"}>
+            <Link to={user.role === "admin" ? "/admin" : "/dashboard"} data-testid="nav-dashboard-link">
               <Button data-testid="nav-dashboard-btn" className="bg-indigo-500 hover:bg-indigo-600">Painel</Button>
             </Link>
           ) : (

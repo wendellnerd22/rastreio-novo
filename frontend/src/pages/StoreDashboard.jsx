@@ -13,6 +13,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/context/AuthContext";
 
+// helpers PT-BR ↔ payload novo do backend
+const toOrder = (o) => ({
+  customer_name: o.cliente_nome, customer_whatsapp: o.cliente_whatsapp,
+  address: o.endereco, items: o.itens, total: o.total,
+  payment_method: o.forma_pagamento, notes: o.observacao,
+});
+
 const STATUS_LABELS = {
   pending: { label: "Pendente", color: "bg-amber-500/20 text-amber-300 border-amber-500/30" },
   preparing: { label: "Em preparo", color: "bg-blue-500/20 text-blue-300 border-blue-500/30" },
@@ -57,7 +64,7 @@ export default function StoreDashboard() {
     const prevIds = new Set(alerts.map(x => `${x.order_id}-${x.type}`));
     (a.data.alerts || []).forEach(al => {
       const k = `${al.order_id}-${al.type}`;
-      if (!prevIds.has(k)) toast.warning(`⚠️ ${al.customer_name}: ${al.message}`);
+      if (!prevIds.has(k)) toast.warning(`⚠️ ${al.cliente_nome}: ${al.message}`);
     });
     setAlerts(a.data.alerts || []);
     setNotes(n.data || []);
@@ -65,12 +72,18 @@ export default function StoreDashboard() {
   useEffect(() => { loadAll(); const t = setInterval(loadAll, 15000); return () => clearInterval(t); }, []);
 
   const createMotoboy = async () => {
-    try { await api.post("/motoboys", mForm); toast.success("Motoboy cadastrado"); setOpenM(false); setMForm({ name: "", whatsapp: "", vehicle: "Moto", plate: "" }); loadAll(); }
+    try {
+      const payload = { nome: mForm.name, telefone: mForm.whatsapp, veiculo: mForm.vehicle, placa: mForm.plate };
+      await api.post("/motoboys", payload); toast.success("Motoboy cadastrado"); setOpenM(false); setMForm({ name: "", whatsapp: "", vehicle: "Moto", plate: "" }); loadAll(); }
     catch (e) { toast.error(e.response?.data?.detail || "Erro"); }
   };
   const delMotoboy = async (id) => { await api.delete(`/motoboys/${id}`); toast.success("Removido"); loadAll(); };
   const createOrder = async () => {
-    try { await api.post("/orders", { ...oForm, total: Number(oForm.total) }); toast.success("Pedido criado"); setOpenO(false);
+    try {
+      const payload = { cliente_nome: oForm.customer_name, cliente_whatsapp: oForm.customer_whatsapp,
+        endereco: oForm.address, itens: oForm.items, total: Number(oForm.total),
+        forma_pagamento: oForm.payment_method, observacao: oForm.notes };
+      await api.post("/orders", payload); toast.success("Pedido criado"); setOpenO(false);
       setOForm({ customer_name: "", customer_whatsapp: "", address: "", items: "", total: 0, payment_method: "PIX", notes: "" }); loadAll(); }
     catch (e) { toast.error(e.response?.data?.detail || "Erro"); }
   };
@@ -82,17 +95,16 @@ export default function StoreDashboard() {
       const publicUrl = window.location.origin;
       const customerLink = `${publicUrl}/track/${data.tracking_token}`;
       const motoboyLink = `${publicUrl}/motoboy/${data.motoboy_share_token}`;
-      // WhatsApp to motoboy
-      const msgMoto = `🚀 Novo pedido!\nCliente: ${data.customer_name}\nEndereço: ${data.address}\nTotal: R$ ${Number(data.total).toFixed(2)}\n\n📍 Compartilhe sua localização: ${motoboyLink}`;
+      const msgMoto = `🚀 Novo pedido!\nCliente: ${data.cliente_nome}\nEndereço: ${data.endereco}\nTotal: R$ ${Number(data.total).toFixed(2)}\n\n📍 Compartilhe sua localização: ${motoboyLink}`;
       const msgClient = `🛵 Seu pedido saiu para entrega!\nAcompanhe em tempo real: ${customerLink}`;
-      window.open(`https://wa.me/${sanitizeWhatsapp(motoboy.whatsapp)}?text=${encodeURIComponent(msgMoto)}`, "_blank");
-      setTimeout(() => window.open(`https://wa.me/${sanitizeWhatsapp(data.customer_whatsapp)}?text=${encodeURIComponent(msgClient)}`, "_blank"), 500);
+      window.open(`https://wa.me/${sanitizeWhatsapp(motoboy.telefone)}?text=${encodeURIComponent(msgMoto)}`, "_blank");
+      setTimeout(() => window.open(`https://wa.me/${sanitizeWhatsapp(data.cliente_whatsapp)}?text=${encodeURIComponent(msgClient)}`, "_blank"), 500);
       toast.success("Pedido despachado — WhatsApp aberto");
       setOpenD(null); setDispatchMotoboy(""); loadAll();
     } catch (e) { toast.error(e.response?.data?.detail || "Erro"); }
   };
   const changeStatus = async (id, status) => { await api.patch(`/orders/${id}/status`, { status }); toast.success("Status atualizado"); loadAll(); };
-  const saveLad = async () => { await api.put("/store/lad", { api_token: ladToken, api_base: "https://api2.laddelivery.com.br" }); toast.success("Token LAD salvo"); loadAll(); };
+  const saveLad = async () => { await api.put("/store/lad", { token: ladToken, demo: false }); toast.success("Token LAD salvo"); loadAll(); };
   const importLad = async () => {
     if (!ladUuid.trim()) { toast.error("Informe o UUID do pedido LAD"); return; }
     try {
@@ -115,7 +127,7 @@ export default function StoreDashboard() {
     catch { toast.error("Falha"); }
   };
   const markNoteRead = async (nid) => { await api.patch(`/notes/${nid}/read`); loadAll(); };
-  const unreadNotes = notes.filter(n => !n.read);
+  const unreadNotes = notes.filter(n => !n.lida);
   const testLad = async () => {
     try { const { data } = await api.get("/store/lad/loja"); toast.success(`Conectado: ${data.data?.nome || "OK"}`); }
     catch (e) { toast.error(e.response?.data?.detail || "Falha"); }
@@ -124,7 +136,7 @@ export default function StoreDashboard() {
   const sendClientWhatsapp = (order) => {
     const link = `${window.location.origin}/track/${order.tracking_token}`;
     const msg = `🛵 Acompanhe seu pedido em tempo real: ${link}`;
-    window.open(`https://wa.me/${sanitizeWhatsapp(order.customer_whatsapp)}?text=${encodeURIComponent(msg)}`, "_blank");
+    window.open(`https://wa.me/${sanitizeWhatsapp(order.cliente_whatsapp)}?text=${encodeURIComponent(msg)}`, "_blank");
   };
 
   return (
@@ -225,17 +237,17 @@ export default function StoreDashboard() {
                     <div className="flex items-start justify-between gap-4 flex-wrap">
                       <div>
                         <div className="flex items-center gap-2 mb-1">
-                          <span className="font-display font-bold text-lg">{o.customer_name}</span>
+                          <span className="font-display font-bold text-lg">{o.cliente_nome}</span>
                           <Badge className={st.color}>{st.label}</Badge>
                         </div>
-                        <div className="text-sm text-slate-400">{o.address}</div>
-                        <div className="text-xs text-slate-500 mt-1">{o.items}</div>
+                        <div className="text-sm text-slate-400">{o.endereco}</div>
+                        <div className="text-xs text-slate-500 mt-1">{o.itens}</div>
                         {o.lad_uuid && <div className="text-xs text-emerald-400 mt-1 font-mono">LAD · {o.lad_uuid.slice(0, 8)}…</div>}
-                        {o.motoboy && <div className="text-xs text-indigo-300 mt-1">🛵 {o.motoboy.name}</div>}
+                        {o.motoboy && <div className="text-xs text-indigo-300 mt-1">🛵 {o.motoboy.nome}</div>}
                       </div>
                       <div className="text-right">
                         <div className="text-2xl font-display font-bold">R$ {Number(o.total).toFixed(2)}</div>
-                        <div className="text-xs text-slate-500">{o.payment_method}</div>
+                        <div className="text-xs text-slate-500">{o.forma_pagamento}</div>
                       </div>
                     </div>
                     <div className="mt-4 flex flex-wrap gap-2">
@@ -298,8 +310,8 @@ export default function StoreDashboard() {
                       <Bike className="w-5 h-5 text-indigo-400" />
                     </div>
                     <div>
-                      <div className="font-display font-bold">{m.name}</div>
-                      <div className="text-xs text-slate-500">{m.whatsapp} · {m.vehicle} {m.plate && `· ${m.plate}`}</div>
+                      <div className="font-display font-bold">{m.nome}</div>
+                      <div className="text-xs text-slate-500">{m.telefone} · {m.veiculo} {m.placa && `· ${m.placa}`}</div>
                     </div>
                   </div>
                   <Button data-testid={`del-motoboy-${m.id}`} onClick={() => delMotoboy(m.id)} variant="ghost" size="icon" className="text-rose-400 hover:bg-rose-950">
@@ -329,7 +341,7 @@ export default function StoreDashboard() {
                           <span className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded ${a.type === "off_route" ? "bg-rose-500 text-white" : "bg-amber-500 text-slate-950"}`}>
                             {a.type === "off_route" ? "Fora de rota" : a.type === "no_location" ? "Sem localização" : "Localização parada"}
                           </span>
-                          <span className="text-sm text-slate-100 font-medium">{a.customer_name}</span>
+                          <span className="text-sm text-slate-100 font-medium">{a.cliente_nome}</span>
                         </div>
                         <div className="text-sm text-slate-300">{a.message}</div>
                       </div>
@@ -349,13 +361,13 @@ export default function StoreDashboard() {
                 ) : (
                   <div className="space-y-3">
                     {notes.slice(0, 10).map(n => (
-                      <div key={n.id} data-testid={`note-${n.id}`} className={`rounded-xl border p-3 ${n.read ? "border-slate-800 bg-slate-900/50" : "border-emerald-500/30 bg-emerald-500/5"}`}>
+                      <div key={n.id} data-testid={`note-${n.id}`} className={`rounded-xl border p-3 ${n.lida ? "border-slate-800 bg-slate-900/50" : "border-emerald-500/30 bg-emerald-500/5"}`}>
                         <div className="flex items-start justify-between gap-2">
                           <div className="flex-1">
-                            <div className="text-xs text-slate-500">{n.customer_name} · {new Date(n.at).toLocaleTimeString("pt-BR")}</div>
-                            <div className="text-sm text-slate-200 mt-1 whitespace-pre-line">{n.message}</div>
+                            <div className="text-xs text-slate-500">{n.cliente_nome} · {new Date(n.at).toLocaleTimeString("pt-BR")}</div>
+                            <div className="text-sm text-slate-200 mt-1 whitespace-pre-line">{n.mensagem}</div>
                           </div>
-                          {!n.read && <Button data-testid={`note-read-${n.id}`} onClick={() => markNoteRead(n.id)} variant="ghost" size="sm" className="text-slate-400 hover:text-white"><Check className="w-4 h-4" /></Button>}
+                          {!n.lida && <Button data-testid={`note-read-${n.id}`} onClick={() => markNoteRead(n.id)} variant="ghost" size="sm" className="text-slate-400 hover:text-white"><Check className="w-4 h-4" /></Button>}
                         </div>
                       </div>
                     ))}
@@ -420,7 +432,7 @@ export default function StoreDashboard() {
               <Select value={dispatchMotoboy} onValueChange={setDispatchMotoboy}>
                 <SelectTrigger data-testid="dispatch-motoboy-select" className="bg-slate-900 border-slate-800 mt-1"><SelectValue placeholder="Selecione…" /></SelectTrigger>
                 <SelectContent className="bg-slate-900 border-slate-800 text-slate-100">
-                  {motoboys.map(m => <SelectItem key={m.id} value={m.id}>{m.name} · {m.whatsapp}</SelectItem>)}
+                  {motoboys.map(m => <SelectItem key={m.id} value={m.id}>{m.nome} · {m.telefone}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>

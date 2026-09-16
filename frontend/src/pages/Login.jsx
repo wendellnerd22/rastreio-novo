@@ -18,7 +18,7 @@ export default function Login() {
     e.preventDefault();
     setLoading(true);
     try {
-      const u = await login(email, password);
+      const u = await login(email, password);  // senha field mapped in AuthContext.login
       toast.success("Bem-vindo!");
       nav(u.role === "admin" ? "/admin" : "/dashboard");
     } catch (err) {

@@ -32,17 +32,20 @@ export default function AdminDashboard() {
   };
   useEffect(() => { load(); }, []);
 
-  const toggle = async (sid, active) => {
-    try { await api.patch(`/admin/stores/${sid}`, { active: !active }); toast.success("Status atualizado"); load(); }
+  const toggle = async (sid, ativa) => {
+    try { await api.patch(`/admin/stores/${sid}`, { ativa: !ativa }); toast.success("Status atualizado"); load(); }
     catch { toast.error("Falha"); }
   };
-  const changePlan = async (sid, plan) => {
-    try { await api.put(`/admin/stores/${sid}/plan`, { plan }); toast.success(`Plano ${plan}`); load(); }
+  const changePlan = async (sid, plano) => {
+    try { await api.put(`/admin/stores/${sid}/plan`, { plano }); toast.success(`Plano ${plano}`); load(); }
     catch (e) { toast.error(e.response?.data?.detail || "Erro"); }
   };
   const createStore = async () => {
     try {
-      await api.post("/admin/stores", form);
+      const payload = { nome_loja: form.store_name, nome_dono: form.owner_name,
+        email_dono: form.owner_email, senha_dono: form.owner_password,
+        telefone: form.phone, plano: form.plan };
+      await api.post("/admin/stores", payload);
       toast.success("Loja criada");
       setOpenNew(false);
       setForm({ store_name: "", owner_name: "", owner_email: "", owner_password: "", phone: "", plan: "free" });
@@ -139,9 +142,9 @@ export default function AdminDashboard() {
             <TableBody>
               {stores.map(s => (
                 <TableRow key={s.id} className="border-slate-800 hover:bg-slate-900/50" data-testid={`admin-store-row-${s.id}`}>
-                  <TableCell className="font-medium">{s.name}<div className="text-xs text-slate-500">{s.phone || "sem telefone"}</div></TableCell>
+                  <TableCell className="font-medium">{s.nome}<div className="text-xs text-slate-500">{s.telefone || "sem telefone"}</div></TableCell>
                   <TableCell>
-                    <Select value={s.plan || "free"} onValueChange={v => changePlan(s.id, v)}>
+                    <Select value={s.plano || "free"} onValueChange={v => changePlan(s.id, v)}>
                       <SelectTrigger data-testid={`plan-${s.id}`} className="w-28 bg-slate-900 border-slate-800 h-8 text-xs"><SelectValue /></SelectTrigger>
                       <SelectContent className="bg-slate-900 border-slate-800 text-slate-100">
                         <SelectItem value="free">Free</SelectItem><SelectItem value="basic">Basic</SelectItem><SelectItem value="pro">Pro</SelectItem>
@@ -150,14 +153,14 @@ export default function AdminDashboard() {
                   </TableCell>
                   <TableCell>{s.motoboys_count}</TableCell>
                   <TableCell>{s.orders_count}</TableCell>
-                  <TableCell>{s.lad_api_token ? <Badge className="bg-emerald-500/20 text-emerald-400 border-emerald-500/30">Conectada</Badge> : <span className="text-slate-500 text-sm">—</span>}</TableCell>
+                  <TableCell>{s.lad_token ? <Badge className="bg-emerald-500/20 text-emerald-400 border-emerald-500/30">Conectada</Badge> : <span className="text-slate-500 text-sm">—</span>}</TableCell>
                   <TableCell>
-                    {s.active ? <Badge className="bg-indigo-500/20 text-indigo-300 border-indigo-500/30">Ativa</Badge>
+                    {s.ativa ? <Badge className="bg-indigo-500/20 text-indigo-300 border-indigo-500/30">Ativa</Badge>
                               : <Badge className="bg-slate-700 text-slate-300">Inativa</Badge>}
                   </TableCell>
                   <TableCell className="text-right">
-                    <Button data-testid={`admin-toggle-${s.id}`} onClick={() => toggle(s.id, s.active)} variant="ghost" size="sm" className="text-slate-400 hover:text-white">
-                      {s.active ? <ToggleRight className="w-5 h-5 text-indigo-400" /> : <ToggleLeft className="w-5 h-5" />}
+                    <Button data-testid={`admin-toggle-${s.id}`} onClick={() => toggle(s.id, s.ativa)} variant="ghost" size="sm" className="text-slate-400 hover:text-white">
+                      {s.ativa ? <ToggleRight className="w-5 h-5 text-indigo-400" /> : <ToggleLeft className="w-5 h-5" />}
                     </Button>
                     <Button data-testid={`admin-del-${s.id}`} onClick={() => delStore(s.id)} variant="ghost" size="sm" className="text-rose-400 hover:bg-rose-950">
                       <Trash2 className="w-4 h-4" />

@@ -101,7 +101,7 @@ export default function CustomerTrack() {
     if (!note.trim()) { toast.error("Escreva uma mensagem"); return; }
     setSending(true);
     try {
-      const { data: r } = await axios.post(`${API}/track/${token}/note`, { message: note });
+      const { data: r } = await axios.post(`${API}/track/${token}/note`, { mensagem: note });
       toast.success("Nota enviada para a loja");
       if (r.wa_url) window.open(r.wa_url, "_blank");
       setOpenNote(false); setNote("");
@@ -139,6 +139,14 @@ export default function CustomerTrack() {
   if (dest) points.push(dest);
   const path = (route.points || []).map(p => [p.lat, p.lng]);
 
+  const clienteNome = order.cliente_nome;
+  const endereco = order.endereco;
+  const itens = order.itens;
+  const observacao = order.observacao;
+  const formaPagamento = order.forma_pagamento;
+  const storeNome = data.store?.nome;
+  const motoboyInfo = data.motoboy;
+
   return (
     <div className="min-h-screen bg-[#0B0F17] text-slate-100">
       <header className="glass border-b border-slate-800 px-6 py-4">
@@ -146,13 +154,13 @@ export default function CustomerTrack() {
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-emerald-500/20 border border-emerald-500/30 grid place-items-center"><Store className="w-5 h-5 text-emerald-400" /></div>
             <div>
-              <div className="font-display font-bold">{data.store?.name}</div>
-              <div className="text-xs text-slate-500">Pedido de {order.customer_name}</div>
+              <div className="font-display font-bold">{storeNome}</div>
+              <div className="text-xs text-slate-500">Pedido de {clienteNome}</div>
             </div>
           </div>
           <div className="text-right">
             <div className="text-2xl font-display font-bold">R$ {Number(order.total).toFixed(2)}</div>
-            <div className="text-xs text-slate-500">{order.payment_method}</div>
+            <div className="text-xs text-slate-500">{formaPagamento}</div>
           </div>
         </div>
       </header>
@@ -197,7 +205,7 @@ export default function CustomerTrack() {
                 <MapContainer center={[loc.lat, loc.lng]} zoom={15} style={{height: "100%", width: "100%"}} className="rounded-b-2xl">
                   <TileLayer attribution='&copy; OpenStreetMap' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
                   {path.length > 1 && <Polyline positions={path} pathOptions={{color: "#6366F1", weight: 4, opacity: 0.8, dashArray: "6 8"}} />}
-                  <Marker position={[loc.lat, loc.lng]} icon={bikeIcon}><Popup>{data.motoboy?.name || "Motoboy"}</Popup></Marker>
+                  <Marker position={[loc.lat, loc.lng]} icon={bikeIcon}><Popup>{motoboyInfo?.nome || "Motoboy"}</Popup></Marker>
                   {dest && <Marker position={dest} icon={homeIcon}><Popup>Destino</Popup></Marker>}
                   <FitBounds points={points} />
                 </MapContainer>
@@ -211,14 +219,14 @@ export default function CustomerTrack() {
         <div className="grid md:grid-cols-2 gap-4">
           <div className="card-dark p-5">
             <div className="text-xs text-slate-500 uppercase tracking-wider mb-3">Endereço de entrega</div>
-            <div className="text-slate-200">{order.address}</div>
+            <div className="text-slate-200">{endereco}</div>
           </div>
           <div className="card-dark p-5">
             <div className="text-xs text-slate-500 uppercase tracking-wider mb-3">Motoboy</div>
-            {data.motoboy ? (
+            {motoboyInfo ? (
               <div>
-                <div className="font-display font-bold">{data.motoboy.name}</div>
-                <div className="text-xs text-slate-500">{data.motoboy.vehicle} {data.motoboy.plate && `· ${data.motoboy.plate}`}</div>
+                <div className="font-display font-bold">{motoboyInfo.nome}</div>
+                <div className="text-xs text-slate-500">{motoboyInfo.veiculo} {motoboyInfo.placa && `· ${motoboyInfo.placa}`}</div>
               </div>
             ) : <div className="text-slate-500 text-sm">Aguardando despacho…</div>}
           </div>
@@ -226,8 +234,8 @@ export default function CustomerTrack() {
 
         <div className="card-dark p-5">
           <div className="text-xs text-slate-500 uppercase tracking-wider mb-3">Itens</div>
-          <div className="text-slate-300 text-sm whitespace-pre-line">{order.items}</div>
-          {order.notes && <div className="mt-3 pt-3 border-t border-slate-800 text-xs text-slate-500">Obs: {order.notes}</div>}
+          <div className="text-slate-300 text-sm whitespace-pre-line">{itens}</div>
+          {observacao && <div className="mt-3 pt-3 border-t border-slate-800 text-xs text-slate-500">Obs: {observacao}</div>}
         </div>
 
         {order.status === "dispatched" && !pushEnabled && (

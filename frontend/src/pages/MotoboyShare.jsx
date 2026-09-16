@@ -74,8 +74,8 @@ export default function MotoboyShare() {
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-indigo-500/20 border border-indigo-500/30 grid place-items-center"><Navigation className="w-5 h-5 text-indigo-400" /></div>
             <div>
-              <div className="font-display font-bold">Motoboy · {data.motoboy?.name}</div>
-              <div className="text-xs text-slate-500">{data.store?.name}</div>
+              <div className="font-display font-bold">Motoboy · {data.motoboy?.nome}</div>
+              <div className="text-xs text-slate-500">{data.store?.nome}</div>
             </div>
           </div>
           <div className={`text-xs px-3 py-1 rounded-full border ${sharing ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/30" : "bg-slate-800 text-slate-400 border-slate-700"}`}>
@@ -89,9 +89,9 @@ export default function MotoboyShare() {
           <div className="flex items-start gap-3 mb-3">
             <Package className="w-5 h-5 text-indigo-400 mt-1" />
             <div className="flex-1">
-              <div className="font-display font-bold text-lg">{data.order.customer_name}</div>
-              <div className="text-sm text-slate-300">{data.order.address}</div>
-              {data.order.notes && <div className="text-xs text-slate-500 mt-1">Obs: {data.order.notes}</div>}
+              <div className="font-display font-bold text-lg">{data.order.cliente_nome}</div>
+              <div className="text-sm text-slate-300">{data.order.endereco}</div>
+              {data.order.observacao && <div className="text-xs text-slate-500 mt-1">Obs: {data.order.observacao}</div>}
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3 pt-3 border-t border-slate-800">

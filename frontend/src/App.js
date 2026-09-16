@@ -15,7 +15,9 @@ function Protected({ role, children }) {
   const { user, loading } = useAuth();
   if (loading) return <div className="min-h-screen grid place-items-center text-slate-400">Carregando…</div>;
   if (!user) return <Navigate to="/login" replace />;
-  if (role && user.role !== role) return <Navigate to="/" replace />;
+  // "role" prop expects legacy "store"; new backend uses "lojista"
+  const roles = role === "store" ? ["lojista"] : role ? [role] : null;
+  if (roles && !roles.includes(user.role)) return <Navigate to="/" replace />;
   return children;
 }
 

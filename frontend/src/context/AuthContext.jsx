@@ -2,39 +2,49 @@ import { createContext, useContext, useEffect, useState } from "react";
 import axios from "axios";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+
+// axios instance com cookie httpOnly (zp_session) sempre enviado
+const api = axios.create({ baseURL: API, withCredentials: true });
+
 const AuthCtx = createContext(null);
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [token, setToken] = useState(() => localStorage.getItem("zp_token"));
 
-  useEffect(() => {
-    if (!token) { setLoading(false); return; }
-    axios.get(`${API}/auth/me`, { headers: { Authorization: `Bearer ${token}` } })
-      .then(r => setUser(r.data))
-      .catch(() => { localStorage.removeItem("zp_token"); setToken(null); })
-      .finally(() => setLoading(false));
-  }, [token]);
+  const refresh = async () => {
+    try {
+      const { data } = await api.get("/auth/me");
+      setUser(data);
+    } catch { setUser(null); }
+    finally { setLoading(false); }
+  };
 
-  const login = async (email, password) => {
-    const { data } = await axios.post(`${API}/auth/login`, { email, password });
-    localStorage.setItem("zp_token", data.token);
-    setToken(data.token); setUser(data.user);
+  useEffect(() => { refresh(); }, []);
+
+  const login = async (email, senha) => {
+    const { data } = await api.post("/auth/login", { email, senha });
+    setUser(data.user);
     return data.user;
   };
+  // register recebe {name, email, password, store_name, phone} do form antigo,
+  // mas o backend novo espera {nome, email, senha, nome_loja, telefone}
+  const _mapRegister = (p) => ({
+    nome: p.name || p.nome, email: p.email, senha: p.password || p.senha,
+    nome_loja: p.store_name || p.nome_loja, telefone: p.phone || p.telefone,
+  });
   const register = async (payload) => {
-    const { data } = await axios.post(`${API}/auth/register`, payload);
-    localStorage.setItem("zp_token", data.token);
-    setToken(data.token); setUser(data.user);
+    const { data } = await api.post("/auth/register", _mapRegister(payload));
+    setUser(data.user);
     return data.user;
   };
-  const logout = () => { localStorage.removeItem("zp_token"); setToken(null); setUser(null); };
+  const logout = async () => {
+    try { await api.post("/auth/logout"); } catch {}
+    setUser(null);
+  };
 
-  const api = axios.create({ baseURL: API, headers: token ? { Authorization: `Bearer ${token}` } : {} });
-
-  return <AuthCtx.Provider value={{ user, loading, token, login, register, logout, api, API }}>{children}</AuthCtx.Provider>;
+  return <AuthCtx.Provider value={{ user, loading, login, register, logout, api, API }}>{children}</AuthCtx.Provider>;
 }
 
 export const useAuth = () => useContext(AuthCtx);
-export { API };
+export { API, api };
