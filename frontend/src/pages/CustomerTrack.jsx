@@ -2,7 +2,11 @@ import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from "react-leaflet";
 import L from "leaflet";
-import { MapPin, Bike, Store, Package, Clock, CheckCircle2 } from "lucide-react";
+import { MapPin, Bike, Store, Package, Clock, CheckCircle2, MessageSquarePlus, Send } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
+import { toast } from "sonner";
 import axios from "axios";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
@@ -55,6 +59,21 @@ export default function CustomerTrack() {
   const [eta, setEta] = useState(null);
   const [route, setRoute] = useState({ points: [], destination: null });
   const [err, setErr] = useState(null);
+  const [openNote, setOpenNote] = useState(false);
+  const [note, setNote] = useState("");
+  const [sending, setSending] = useState(false);
+
+  const sendNote = async () => {
+    if (!note.trim()) { toast.error("Escreva uma mensagem"); return; }
+    setSending(true);
+    try {
+      const { data: r } = await axios.post(`${API}/track/${token}/note`, { message: note });
+      toast.success("Nota enviada para a loja");
+      if (r.wa_url) window.open(r.wa_url, "_blank");
+      setOpenNote(false); setNote("");
+    } catch (e) { toast.error(e.response?.data?.detail || "Falha"); }
+    finally { setSending(false); }
+  };
 
   useEffect(() => {
     let alive = true;
@@ -176,6 +195,28 @@ export default function CustomerTrack() {
           <div className="text-slate-300 text-sm whitespace-pre-line">{order.items}</div>
           {order.notes && <div className="mt-3 pt-3 border-t border-slate-800 text-xs text-slate-500">Obs: {order.notes}</div>}
         </div>
+
+        <Dialog open={openNote} onOpenChange={setOpenNote}>
+          <DialogTrigger asChild>
+            <Button data-testid="open-note-btn" className="w-full bg-emerald-600 hover:bg-emerald-700 h-12">
+              <MessageSquarePlus className="w-4 h-4 mr-2" /> Enviar recado à loja pelo WhatsApp
+            </Button>
+          </DialogTrigger>
+          <DialogContent className="bg-slate-950 border-slate-800 text-slate-100">
+            <DialogHeader><DialogTitle className="font-display">Enviar recado</DialogTitle></DialogHeader>
+            <div className="space-y-3">
+              <p className="text-sm text-slate-400">Ex.: "Estou no portão 3", "Toque a campainha", "Deixe na portaria".</p>
+              <Textarea data-testid="note-textarea" value={note} onChange={e => setNote(e.target.value)}
+                className="bg-slate-900 border-slate-800 min-h-[100px]" placeholder="Digite sua mensagem…" maxLength={500} />
+              <div className="text-xs text-slate-500 text-right">{note.length}/500</div>
+            </div>
+            <DialogFooter>
+              <Button data-testid="send-note-btn" onClick={sendNote} disabled={sending} className="bg-emerald-600 hover:bg-emerald-700">
+                <Send className="w-4 h-4 mr-2" /> {sending ? "Enviando…" : "Enviar via WhatsApp"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </main>
     </div>
   );

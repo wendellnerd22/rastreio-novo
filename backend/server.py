@@ -149,6 +149,10 @@ class LadImportIn(BaseModel):
     uuid: str
 
 
+class NoteIn(BaseModel):
+    message: str
+
+
 PLAN_QUOTAS = {
     "free": {"max_motoboys": 2, "max_orders_month": 50},
     "basic": {"max_motoboys": 5, "max_orders_month": 500},
@@ -613,6 +617,81 @@ async def get_route(token: str):
         raise HTTPException(404, "Não encontrado")
     points = await db.locations.find({"order_id": o["id"]}, {"_id": 0, "lat": 1, "lng": 1, "at": 1}).sort("at", 1).to_list(500)
     return {"points": points, "destination": {"lat": o.get("dest_lat"), "lng": o.get("dest_lng")}}
+
+
+@api.post("/track/{token}/note")
+async def customer_note(token: str, body: NoteIn):
+    o = await db.orders.find_one({"tracking_token": token})
+    if not o:
+        raise HTTPException(404, "Rastreamento não encontrado")
+    s = await db.stores.find_one({"id": o["store_id"]}, {"_id": 0, "phone": 1, "name": 1})
+    note = {
+        "id": str(uuid.uuid4()), "order_id": o["id"], "store_id": o["store_id"],
+        "message": body.message[:500], "customer_name": o["customer_name"],
+        "at": utcnow().isoformat(), "read": False,
+    }
+    await db.notes.insert_one(note)
+    phone = "".join(ch for ch in (s.get("phone") or "") if ch.isdigit())
+    if phone and not phone.startswith("55"):
+        phone = "55" + phone
+    text = f"📝 Nota do cliente {o['customer_name']} (pedido #{o['id'][:8]}):\n{body.message}"
+    wa = f"https://wa.me/{phone}?text={text}" if phone else None
+    return {"ok": True, "wa_url": wa, "store": s.get("name")}
+
+
+@api.get("/notes")
+async def list_notes(user=Depends(require_store)):
+    notes = await db.notes.find({"store_id": user["store_id"]}, {"_id": 0}).sort("at", -1).to_list(100)
+    return notes
+
+
+@api.patch("/notes/{nid}/read")
+async def mark_note_read(nid: str, user=Depends(require_store)):
+    await db.notes.update_one({"id": nid, "store_id": user["store_id"]}, {"$set": {"read": True}})
+    return {"ok": True}
+
+
+@api.get("/alerts")
+async def live_alerts(user=Depends(require_store), stale_min: int = 5):
+    """Compute alerts for currently dispatched orders of this store."""
+    from datetime import datetime as _dt
+    now = utcnow()
+    orders = await db.orders.find({"store_id": user["store_id"], "status": "dispatched"},
+                                    {"_id": 0, "id": 1, "customer_name": 1, "motoboy_id": 1,
+                                     "last_location": 1, "dispatched_at": 1, "dest_lat": 1, "dest_lng": 1}).to_list(200)
+    alerts = []
+    for o in orders:
+        loc = o.get("last_location")
+        # rule 1: no location ping in stale_min
+        if not loc:
+            dispatched_at = o.get("dispatched_at")
+            if dispatched_at:
+                delta = (now - _dt.fromisoformat(dispatched_at)).total_seconds() / 60
+                if delta > stale_min:
+                    alerts.append({"order_id": o["id"], "customer_name": o["customer_name"],
+                                    "type": "no_location", "minutes": int(delta),
+                                    "message": f"Sem localização há {int(delta)} min desde o despacho"})
+            continue
+        last_at = _dt.fromisoformat(loc["at"])
+        delta = (now - last_at).total_seconds() / 60
+        if delta > stale_min:
+            alerts.append({"order_id": o["id"], "customer_name": o["customer_name"],
+                            "type": "stale_location", "minutes": int(delta),
+                            "message": f"Motoboy parou de enviar localização há {int(delta)} min"})
+            continue
+        # rule 2: off-route — distance to destination is INCREASING over the last 3 points
+        if o.get("dest_lat") is not None and o.get("dest_lng") is not None:
+            recent = await db.locations.find({"order_id": o["id"]}, {"_id": 0, "lat": 1, "lng": 1}).sort("at", -1).to_list(3)
+            if len(recent) == 3:
+                dests = (o["dest_lat"], o["dest_lng"])
+                d0 = _haversine_km((recent[2]["lat"], recent[2]["lng"]), dests)
+                d1 = _haversine_km((recent[1]["lat"], recent[1]["lng"]), dests)
+                d2 = _haversine_km((recent[0]["lat"], recent[0]["lng"]), dests)
+                if d2 > d1 > d0 and (d2 - d0) > 0.3:  # moved 300m+ AWAY over 3 pings
+                    alerts.append({"order_id": o["id"], "customer_name": o["customer_name"],
+                                    "type": "off_route", "distance_km": round(d2, 2),
+                                    "message": f"Se afastando do destino ({round((d2 - d0) * 1000)}m nos últimos pings)"})
+    return {"alerts": alerts, "count": len(alerts)}
 
 
 # ============ SEED ============

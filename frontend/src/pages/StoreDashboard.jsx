@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { Zap, LogOut, Bike, Package, Settings, Plus, Trash2, MapPin, Send, Copy, Check, MessageCircle, Download, RefreshCw } from "lucide-react";
+import { Zap, LogOut, Bike, Package, Settings, Plus, Trash2, MapPin, Send, Copy, Check, MessageCircle, Download, RefreshCw, AlertTriangle, Bell } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -41,11 +41,26 @@ export default function StoreDashboard() {
   const [refreshing, setRefreshing] = useState(false);
   const [webhookToken, setWebhookToken] = useState("");
   const [copiedWH, setCopiedWH] = useState(false);
+  const [alerts, setAlerts] = useState([]);
+  const [notes, setNotes] = useState([]);
 
   const loadAll = async () => {
-    const [m, o, s, w] = await Promise.all([api.get("/motoboys"), api.get("/orders"), api.get("/store/me"), api.get("/store/webhook-url").catch(() => ({data: {}}))]);
+    const [m, o, s, w, a, n] = await Promise.all([
+      api.get("/motoboys"), api.get("/orders"), api.get("/store/me"),
+      api.get("/store/webhook-url").catch(() => ({data: {}})),
+      api.get("/alerts").catch(() => ({data: {alerts: []}})),
+      api.get("/notes").catch(() => ({data: []})),
+    ]);
     setMotoboys(m.data); setOrders(o.data); setStore(s.data); setLadToken(s.data.lad_api_token || "");
     if (w.data.token) setWebhookToken(w.data.token);
+    // toast new alerts
+    const prevIds = new Set(alerts.map(x => `${x.order_id}-${x.type}`));
+    (a.data.alerts || []).forEach(al => {
+      const k = `${al.order_id}-${al.type}`;
+      if (!prevIds.has(k)) toast.warning(`⚠️ ${al.customer_name}: ${al.message}`);
+    });
+    setAlerts(a.data.alerts || []);
+    setNotes(n.data || []);
   };
   useEffect(() => { loadAll(); const t = setInterval(loadAll, 15000); return () => clearInterval(t); }, []);
 
@@ -99,7 +114,8 @@ export default function StoreDashboard() {
     try { const { data } = await api.post("/store/webhook-url/rotate"); setWebhookToken(data.token); toast.success("URL rotacionada"); }
     catch { toast.error("Falha"); }
   };
-  const webhookUrl = webhookToken ? `${window.location.origin.replace(/\/$/, "")}${webhookToken ? "" : ""}${process.env.REACT_APP_BACKEND_URL ? "" : ""}` : "";
+  const markNoteRead = async (nid) => { await api.patch(`/notes/${nid}/read`); loadAll(); };
+  const unreadNotes = notes.filter(n => !n.read);
   const testLad = async () => {
     try { const { data } = await api.get("/store/lad/loja"); toast.success(`Conectado: ${data.data?.nome || "OK"}`); }
     catch (e) { toast.error(e.response?.data?.detail || "Falha"); }
@@ -133,6 +149,12 @@ export default function StoreDashboard() {
           <TabsList className="bg-slate-900 border border-slate-800">
             <TabsTrigger data-testid="tab-orders" value="orders"><Package className="w-4 h-4 mr-2" /> Pedidos</TabsTrigger>
             <TabsTrigger data-testid="tab-motoboys" value="motoboys"><Bike className="w-4 h-4 mr-2" /> Motoboys</TabsTrigger>
+            <TabsTrigger data-testid="tab-alerts" value="alerts" className="relative">
+              <Bell className="w-4 h-4 mr-2" /> Alertas
+              {(alerts.length + unreadNotes.length) > 0 && (
+                <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded-full bg-rose-500 text-white font-bold">{alerts.length + unreadNotes.length}</span>
+              )}
+            </TabsTrigger>
             <TabsTrigger data-testid="tab-settings" value="settings"><Settings className="w-4 h-4 mr-2" /> Integração LAD</TabsTrigger>
           </TabsList>
 
@@ -286,6 +308,60 @@ export default function StoreDashboard() {
                 </Card>
               ))}
               {motoboys.length === 0 && <div className="col-span-full text-center text-slate-500 py-12">Nenhum motoboy cadastrado.</div>}
+            </div>
+          </TabsContent>
+
+          <TabsContent value="alerts" className="mt-6">
+            <div className="grid gap-4 md:grid-cols-2">
+              <Card className="card-dark border-slate-800 p-6" data-testid="alerts-card">
+                <div className="flex items-center gap-2 mb-4">
+                  <AlertTriangle className="w-5 h-5 text-amber-400" />
+                  <h2 className="font-display font-bold text-xl">Alertas ao vivo</h2>
+                  <span className="text-xs text-slate-500 ml-auto">Atualiza a cada 15s</span>
+                </div>
+                {alerts.length === 0 ? (
+                  <div className="text-slate-500 text-sm text-center py-8">Nenhum alerta ativo — todos os motoboys estão em rota.</div>
+                ) : (
+                  <div className="space-y-3">
+                    {alerts.map((a, i) => (
+                      <div key={i} data-testid={`alert-${a.type}-${a.order_id}`} className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded ${a.type === "off_route" ? "bg-rose-500 text-white" : "bg-amber-500 text-slate-950"}`}>
+                            {a.type === "off_route" ? "Fora de rota" : a.type === "no_location" ? "Sem localização" : "Localização parada"}
+                          </span>
+                          <span className="text-sm text-slate-100 font-medium">{a.customer_name}</span>
+                        </div>
+                        <div className="text-sm text-slate-300">{a.message}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </Card>
+
+              <Card className="card-dark border-slate-800 p-6" data-testid="notes-card">
+                <div className="flex items-center gap-2 mb-4">
+                  <MessageCircle className="w-5 h-5 text-emerald-400" />
+                  <h2 className="font-display font-bold text-xl">Notas do cliente</h2>
+                  {unreadNotes.length > 0 && <span className="ml-auto text-xs bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded-full border border-emerald-500/30">{unreadNotes.length} novas</span>}
+                </div>
+                {notes.length === 0 ? (
+                  <div className="text-slate-500 text-sm text-center py-8">Nenhuma nota recebida ainda.</div>
+                ) : (
+                  <div className="space-y-3">
+                    {notes.slice(0, 10).map(n => (
+                      <div key={n.id} data-testid={`note-${n.id}`} className={`rounded-xl border p-3 ${n.read ? "border-slate-800 bg-slate-900/50" : "border-emerald-500/30 bg-emerald-500/5"}`}>
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex-1">
+                            <div className="text-xs text-slate-500">{n.customer_name} · {new Date(n.at).toLocaleTimeString("pt-BR")}</div>
+                            <div className="text-sm text-slate-200 mt-1 whitespace-pre-line">{n.message}</div>
+                          </div>
+                          {!n.read && <Button data-testid={`note-read-${n.id}`} onClick={() => markNoteRead(n.id)} variant="ghost" size="sm" className="text-slate-400 hover:text-white"><Check className="w-4 h-4" /></Button>}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </Card>
             </div>
           </TabsContent>
 
